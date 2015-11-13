@@ -1,0 +1,102 @@
+---
+  - hosts: localhost
+    connection: local
+    vars:
+       # Common vars
+       required_packages: [ wget ]
+       download_folder: '/tmp'
+
+       # Java vars
+       java_url: 'http://download.oracle.com/otn-pub/java/jdk/7u71-b14/jdk-7u71-linux-x64.rpm'
+       java_archive: '{{ download_folder }}/{{ java_url | basename }}'
+       java_home: '/usr/java/jdk1.7.0_71'
+       java_env_file: '/etc/profile.d/env.sh'
+
+       # tomcat vars
+       tomcat_url: 'http://archive.apache.org/dist/tomcat/tomcat-7/v7.0.59/bin/apache-tomcat-7.0.59.tar.gz'
+       tomcat_archive: '{{ download_folder }}/{{ tomcat_url | basename }}'
+       tomcat_home: '/usr/share/{{ tomcat_url | basename | regex_replace("\.tar\.gz","") }}'
+       tomcat_user: 'tomcat'
+       tomcat_process_name: 'tomcat'
+       tomcat_sha256: 'e0fe43d1fa17013bf7b3b2d3f71105d606a0582c153eb16fb210e7d5164941b0'
+       tomcat_port: '8081'
+       tomcat_shutdown_port: '8006'
+       # HELP ROLES
+       #   manager-gui - allows access to the HTML GUI and the status pages
+       #   manager-script - allows access to the text interface and the status pages
+       #   manager-jmx - allows access to the JMX proxy and the status pages
+       #   manager-status - allows access to the status pages only
+       #
+       tomcat_ui_users:
+          - name: 'tomcat'
+            password: 'tomcat'
+            role: 'manager-gui'
+
+          - name: 'champu'
+            password: 'champu'
+            role: 'manager-status'
+
+
+    tasks:
+
+     ## Common settings
+     - name: Downloading & Installing require packages
+       yum: name='{{ item }}' state=present
+       with_items: required_packages
+
+     ## Java settings
+     - name: Downloading JAVA
+       command: "wget -q -O {{ java_archive }}
+                 --no-check-certificate --no-cookies
+                 --header 'Cookie: oraclelicense=accept-securebackup-cookie'
+                 {{ java_url }} creates={{ java_archive }}"
+
+     - name: Installing JAVA
+       yum: name='{{ java_archive }}' state=present disable_gpg_check=yes
+
+     - name: Settting Up Global Environment variables for JAVA
+       lineinfile:
+             dest={{ java_env_file }}
+             regexp='^export JAVA_HOME'
+             state=present
+             line='export JAVA_HOME={{ java_home }}'
+             create=yes
+
+     - lineinfile:
+             dest={{ java_env_file }}
+             regexp='^export PATH'
+             state=present
+             line='export PATH=$JAVA_HOME/bin:$PATH'
+
+
+     ## tomcat settings
+     - name: Downloading tomcat
+       get_url: url='{{ tomcat_url }}' dest='{{ tomcat_archive }}' sha256sum='{{ tomcat_sha256 }}'
+
+     - name: Extracting tomcat
+       unarchive: src='{{ tomcat_archive }}' dest='{{ tomcat_home | dirname }}' copy=no creates='{{ tomcat_home  }}'
+
+     - name: Adding tomcat service user
+       user: name='{{ tomcat_user }}' system=yes shell='/bin/bash' home='{{ tomcat_home }}'
+
+     - name: setting up permiossions
+       file: path='{{ tomcat_home }}' mode=0755 owner='{{ tomcat_user }}' group='{{ tomcat_user }}' recurse=yes
+
+     - name: configuring init script
+       template: src=./tomcat_init.j2 dest=/etc/init.d/{{ tomcat_process_name }} mode=0755
+
+     - name: Add service in startup
+       service: name='{{ tomcat_process_name }}' enabled=yes
+
+     - name: Configuring tomcat
+       replace:
+             dest='{{ tomcat_home }}/conf/server.xml'
+             regexp='{{ item.search }}'
+             replace='{{ item.replace }}'
+             backup=yes
+       with_items:
+            - { search: '8080', replace: '{{ tomcat_port }}' }
+            - { search: '8005', replace: '{{ tomcat_shutdown_port }}' }
+
+     - name: Configuring tomcat users
+       template: src=./tomcat-users.xml dest='{{ tomcat_home }}/conf/tomcat-users.xml'
