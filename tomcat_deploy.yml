@@ -1,0 +1,26 @@
+---
+
+   - hosts: localhost
+     vars:
+       war: 'file:///tmp/test.war'
+       manage_wars: '/opt/wars/deploy'
+
+     tasks:
+
+       - name: Configuring base settings
+         file: path='{{ manage_wars }}' state=present
+
+       - name: Downloading WAR
+         get_url: url='{{ war }}' dest='{{ manage_wars }}/'
+
+       - name: Checking the last version
+         set_fact: latest_version='{{ lookup("file", "{{ manage_wars }}/{{ latest_version }}") }}'
+
+       - name: Incrementing the version
+         set_fact: latest_version='{{ latest_version + 1 }}'
+         when: latest_version is defined
+
+       - set_fact: latest_version='0.0.1'
+         when: latest_version is not defined
+
+       - name: Versioning the application
